@@ -1,197 +1,267 @@
 #!/bin/bash
-# memory-sync/setup.sh
-# Setup completo de Engram + rclone + Google Drive en una PC nueva.
+# memory-sync/setup.sh — v2.0
+# Setup y verificación completa de Engram + Git sync en Linux/macOS.
 # Uso: bash setup.sh
 set -e
 
-GDRIVE_REMOTE="gdrive:TRABAJO/engram-sync"
-CRON_JOB="0 * * * * $HOME/.local/bin/engram-sync.sh >> $HOME/.engram/sync.log 2>&1"
+GITHUB_USER="john2k2"
+REPO_NAME="engram-memory"
+REPO_URL="https://github.com/$GITHUB_USER/$REPO_NAME.git"
+ENGRAM_DIR="$HOME/.engram"
+SCRIPTS_DIR="$HOME/.local/bin"
 
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
 
-info()    { echo -e "${GREEN}→${NC} $1"; }
-warn()    { echo -e "${YELLOW}⚠${NC}  $1"; }
-success() { echo -e "${GREEN}✓${NC} $1"; }
-error()   { echo -e "${RED}✗${NC} $1"; exit 1; }
+ok()   { echo -e "${GREEN}  ✓${NC} $1"; }
+warn() { echo -e "${YELLOW}  ⚠${NC}  $1"; }
+err()  { echo -e "${RED}  ✗${NC} $1"; }
+info() { echo -e "${CYAN}  →${NC} $1"; }
+step() { echo -e "\n${CYAN}[$1]${NC} $2"; }
+
+ERRORS=0
+fail() { err "$1"; ERRORS=$((ERRORS + 1)); }
 
 echo ""
-echo "╔══════════════════════════════════════╗"
-echo "║        memory-sync setup v1.0        ║"
-echo "║  Engram + rclone + Google Drive      ║"
-echo "╚══════════════════════════════════════╝"
+echo "╔══════════════════════════════════════════╗"
+echo "║       memory-sync setup v2.0             ║"
+echo "║   Engram + Git sync — Linux / macOS      ║"
+echo "╚══════════════════════════════════════════╝"
 echo ""
 
-# ─── 1. Detectar OS y package manager ─────────────────────────────────────────
-info "Detectando sistema operativo..."
-if command -v dnf &>/dev/null; then
-  PKG="sudo dnf install -y"
-elif command -v apt-get &>/dev/null; then
-  PKG="sudo apt-get install -y"
-elif command -v brew &>/dev/null; then
-  PKG="brew install"
+# ─── 1. Verificar dependencias ────────────────────────────────────────────────
+step "1/6" "Verificando dependencias"
+
+if command -v git &>/dev/null; then
+  ok "git $(git --version | awk '{print $3}')"
 else
-  error "No se encontró un package manager compatible (dnf/apt/brew)."
+  fail "git no está instalado — sudo dnf install git / sudo apt install git"
 fi
-success "Package manager: $PKG"
 
-# ─── 2. Instalar dependencias ──────────────────────────────────────────────────
-info "Instalando dependencias (rclone, curl)..."
-if ! command -v rclone &>/dev/null; then
-  $PKG rclone
-  success "rclone instalado"
+if command -v engram &>/dev/null; then
+  ok "engram $(engram version 2>/dev/null | head -1 || echo '(versión desconocida)')"
 else
-  success "rclone ya está instalado ($(rclone version --check 2>/dev/null | head -1 || rclone --version | head -1))"
-fi
+  info "engram no encontrado, instalando..."
 
-if ! command -v curl &>/dev/null; then
-  $PKG curl
-fi
+  mkdir -p "$SCRIPTS_DIR"
 
-# ─── 3. Instalar Engram ────────────────────────────────────────────────────────
-info "Verificando Engram..."
-if ! command -v engram &>/dev/null; then
-  info "Instalando Engram..."
-  curl -fsSL https://github.com/hyperling/engram/releases/latest/download/engram-linux-amd64 \
-    -o "$HOME/.local/bin/engram" 2>/dev/null || true
-
-  # Fallback: instalar via npm si el binario no existe
-  if [ ! -f "$HOME/.local/bin/engram" ]; then
-    warn "Binario no encontrado, intentando via npm..."
-    npm install -g engram 2>/dev/null || error "No se pudo instalar Engram. Instalalo manualmente: https://engram.dev"
+  if command -v go &>/dev/null; then
+    go install github.com/Gentleman-Programming/engram/cmd/engram@latest
+    ok "engram instalado via go"
+  elif command -v brew &>/dev/null; then
+    brew install gentleman-programming/tap/engram
+    ok "engram instalado via brew"
   else
-    chmod +x "$HOME/.local/bin/engram"
+    ARCH=$(uname -m); OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+    [ "$ARCH" = "x86_64" ]  && ARCH="amd64"
+    [ "$ARCH" = "aarch64" ] && ARCH="arm64"
+
+    LATEST=$(curl -fsSL "https://api.github.com/repos/Gentleman-Programming/engram/releases/latest" \
+      | grep '"tag_name"' | cut -d'"' -f4)
+    [ -z "$LATEST" ] && { fail "No se pudo obtener última versión de engram"; exit 1; }
+
+    TARBALL="engram_${LATEST#v}_${OS}_${ARCH}.tar.gz"
+    curl -fsSL "https://github.com/Gentleman-Programming/engram/releases/download/$LATEST/$TARBALL" \
+      -o "/tmp/engram.tar.gz" || { fail "Error descargando engram"; exit 1; }
+    tar -xzf "/tmp/engram.tar.gz" -C "$SCRIPTS_DIR" engram 2>/dev/null \
+      || tar -xzf "/tmp/engram.tar.gz" -C "/tmp/" && mv /tmp/engram "$SCRIPTS_DIR/"
+    chmod +x "$SCRIPTS_DIR/engram"
+    rm -f /tmp/engram.tar.gz
+    export PATH="$SCRIPTS_DIR:$PATH"
+    ok "engram $LATEST instalado en $SCRIPTS_DIR"
   fi
-  success "Engram instalado"
+
+  command -v engram &>/dev/null || { fail "engram no quedó en el PATH"; exit 1; }
+fi
+
+if ! echo "$PATH" | grep -q "$SCRIPTS_DIR"; then
+  warn "$SCRIPTS_DIR no está en el PATH — agregá a tu shell: export PATH=\"\$HOME/.local/bin:\$PATH\""
+fi
+
+# ─── 2. Verificar acceso a GitHub ────────────────────────────────────────────
+step "2/6" "Verificando acceso a GitHub"
+
+if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+  GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
+  ok "GitHub CLI autenticado como $GH_USER"
+
+  if ! gh repo view "$GITHUB_USER/$REPO_NAME" &>/dev/null 2>&1; then
+    info "Creando repo privado $REPO_NAME..."
+    gh repo create "$REPO_NAME" --private --description "Engram memory sync across machines" &>/dev/null
+    ok "Repo $GITHUB_USER/$REPO_NAME creado"
+  else
+    ok "Repo $GITHUB_USER/$REPO_NAME ya existe"
+  fi
 else
-  success "Engram ya está instalado ($(engram version 2>/dev/null || echo 'version desconocida'))"
+  warn "GitHub CLI no disponible o no autenticado"
+  if git ls-remote "$REPO_URL" HEAD &>/dev/null 2>&1; then
+    ok "Repo $REPO_URL accesible via HTTPS"
+  else
+    warn "No se pudo verificar acceso al repo — si falla el clone, ejecutá: gh auth login"
+  fi
 fi
 
-mkdir -p "$HOME/.engram"
-mkdir -p "$HOME/.local/bin"
+# ─── 3. Configurar ~/.engram como repo git ───────────────────────────────────
+step "3/6" "Configurando ~/.engram"
 
-# ─── 4. Configurar rclone con Google Drive ────────────────────────────────────
-info "Verificando configuración de rclone..."
-RCLONE_CONFIG="$HOME/.config/rclone/rclone.conf"
+mkdir -p "$ENGRAM_DIR"
 
-if ! rclone listremotes 2>/dev/null | grep -q "gdrive:"; then
-  echo ""
-  warn "rclone no tiene Google Drive configurado."
-  warn "Se abrirá el asistente de configuración. Seguí estos pasos:"
-  echo ""
-  echo "  1. Ingresá 'n' para crear un nuevo remote"
-  echo "  2. Name: gdrive"
-  echo "  3. Storage: Google Drive (buscar por número)"
-  echo "  4. Client ID y Secret: Enter (vacío)"
-  echo "  5. Scope: 1 (full access)"
-  echo "  6. Todo lo demás: Enter (defaults)"
-  echo "  7. 'n' en Edit advanced config"
-  echo "  8. 'y' en Use auto config → se abre el browser → autorizás"
-  echo "  9. 'n' en Shared Drive"
-  echo " 10. 'y' para confirmar"
-  echo ""
-  read -p "Presioná Enter para abrir el asistente de rclone..."
-  rclone config
+if [ -d "$ENGRAM_DIR/.git" ]; then
+  ok "~/.engram ya es un repositorio git"
+  CURRENT_REMOTE=$(git -C "$ENGRAM_DIR" remote get-url origin 2>/dev/null || echo "")
+  if [ "$CURRENT_REMOTE" != "$REPO_URL" ]; then
+    info "Actualizando remote: $CURRENT_REMOTE → $REPO_URL"
+    git -C "$ENGRAM_DIR" remote set-url origin "$REPO_URL"
+    ok "Remote actualizado"
+  else
+    ok "Remote correcto: $REPO_URL"
+  fi
 else
-  success "rclone ya tiene Google Drive configurado"
-fi
+  info "Inicializando git en ~/.engram..."
+  git -C "$ENGRAM_DIR" init -q
+  git -C "$ENGRAM_DIR" branch -M main 2>/dev/null || true
 
-# Verificar conexión
-info "Verificando conexión con Google Drive..."
-if ! rclone lsd gdrive: &>/dev/null; then
-  error "No se pudo conectar a Google Drive. Revisá la configuración con: rclone config"
-fi
-success "Google Drive conectado"
-
-# Crear carpeta de sync si no existe
-rclone mkdir "$GDRIVE_REMOTE" 2>/dev/null || true
-success "Carpeta $GDRIVE_REMOTE lista"
-
-# ─── 5. Instalar script de sync ───────────────────────────────────────────────
-info "Instalando engram-sync.sh..."
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cp "$SCRIPT_DIR/engram-sync.sh" "$HOME/.local/bin/engram-sync.sh"
-chmod +x "$HOME/.local/bin/engram-sync.sh"
-success "Script instalado en ~/.local/bin/engram-sync.sh"
-
-# ─── 6. Restaurar memorias desde Google Drive ─────────────────────────────────
-echo ""
-info "Buscando memorias existentes en Google Drive..."
-CHUNK_COUNT=$(rclone ls "$GDRIVE_REMOTE" 2>/dev/null | grep -c ".jsonl.gz" || echo "0")
-
-if [ "$CHUNK_COUNT" -gt 0 ]; then
-  info "Encontrados $CHUNK_COUNT chunks. Restaurando..."
-
-  # Descargar todos los chunks
-  RESTORE_DIR="$HOME/.engram/restore-tmp"
-  mkdir -p "$RESTORE_DIR"
-  rclone copy "$GDRIVE_REMOTE" "$RESTORE_DIR" --include "*.jsonl.gz" --log-level ERROR
-
-  # Importar a Engram
-  find "$RESTORE_DIR" -name "*.jsonl.gz" | while read chunk; do
-    engram sync --import "$chunk" 2>/dev/null || true
-  done
-  rm -rf "$RESTORE_DIR"
-  success "Memorias restauradas desde Google Drive"
-else
-  warn "No se encontraron memorias previas en Google Drive. Empezando desde cero."
-fi
-
-# ─── 7. Configurar cron ───────────────────────────────────────────────────────
-info "Configurando cron (sync cada hora)..."
-if ! crontab -l 2>/dev/null | grep -q "engram-sync"; then
-  (crontab -l 2>/dev/null; echo "$CRON_JOB") | crontab -
-  success "Cron configurado: sync cada hora en punto"
-else
-  success "Cron ya estaba configurado"
-fi
-
-# ─── 8. Configurar systemd para sync al iniciar sesión (Linux) ───────────────
-if command -v systemctl &>/dev/null && systemctl --user status &>/dev/null 2>&1; then
-  info "Configurando sync automático al iniciar sesión (systemd)..."
-  SYSTEMD_DIR="$HOME/.config/systemd/user"
-  mkdir -p "$SYSTEMD_DIR"
-  cat > "$SYSTEMD_DIR/engram-sync.service" << EOF
-[Unit]
-Description=Engram memory sync to Google Drive
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=$HOME/.local/bin/engram-sync.sh
-StandardOutput=append:$HOME/.engram/sync.log
-StandardError=append:$HOME/.engram/sync.log
-
-[Install]
-WantedBy=default.target
+  cat > "$ENGRAM_DIR/.gitignore" << 'EOF'
+engram.db
+engram.db-shm
+engram.db-wal
+*.log
 EOF
-  systemctl --user daemon-reload
-  systemctl --user enable engram-sync.service
-  success "Systemd configurado: sync al iniciar sesión"
-else
-  warn "Systemd no disponible — el sync solo corre via cron cada hora"
+
+  git -C "$ENGRAM_DIR" remote add origin "$REPO_URL"
+
+  # Traer historial remoto si existe
+  if git -C "$ENGRAM_DIR" fetch origin main -q &>/dev/null 2>&1; then
+    info "Incorporando historial remoto..."
+    git -C "$ENGRAM_DIR" reset --hard origin/main -q 2>/dev/null || \
+      git -C "$ENGRAM_DIR" checkout -B main origin/main -q 2>/dev/null || true
+    ok "Historial remoto incorporado"
+  else
+    info "Sin historial remoto previo — iniciando desde cero"
+    git -C "$ENGRAM_DIR" add .gitignore 2>/dev/null || true
+    [ -f "$ENGRAM_DIR/manifest.json" ] && git -C "$ENGRAM_DIR" add manifest.json 2>/dev/null || true
+    ls "$ENGRAM_DIR/chunks/"*.jsonl.gz &>/dev/null 2>&1 && \
+      git -C "$ENGRAM_DIR" add chunks/ 2>/dev/null || true
+    git -C "$ENGRAM_DIR" diff --staged --quiet 2>/dev/null || \
+      git -C "$ENGRAM_DIR" commit -m "init: engram memory sync" -q
+    git -C "$ENGRAM_DIR" push -u origin main -q && ok "Repo subido a GitHub" || \
+      warn "No se pudo hacer push — verificá credenciales de GitHub"
+  fi
 fi
 
-# ─── 9. Backup de config de rclone en Google Drive ───────────────────────────
-info "Guardando config de rclone en Google Drive (para futuras PCs)..."
-rclone copy "$RCLONE_CONFIG" "gdrive:TRABAJO/engram-sync/_config/" --log-level ERROR 2>/dev/null || true
-success "Config de rclone respaldada"
+# ─── 4. Sincronizar memoria ───────────────────────────────────────────────────
+step "4/6" "Sincronizando memoria"
 
-# ─── 10. Primer sync ──────────────────────────────────────────────────────────
-info "Ejecutando primer sync..."
-"$HOME/.local/bin/engram-sync.sh"
+info "Trayendo cambios remotos..."
+git -C "$ENGRAM_DIR" pull --rebase --autostash -q 2>/dev/null || \
+  warn "pull falló — puede no haber conexión o ser el primer setup"
+
+info "Importando chunks a la DB local..."
+engram sync --import 2>/dev/null && ok "Chunks importados" || \
+  warn "Sin chunks nuevos para importar"
+
+info "Exportando memoria local como chunks..."
+engram sync 2>/dev/null && ok "Chunks exportados" || \
+  warn "Sin observaciones nuevas para exportar"
+
+git -C "$ENGRAM_DIR" add chunks/ manifest.json &>/dev/null 2>/dev/null || true
+if ! git -C "$ENGRAM_DIR" diff --staged --quiet 2>/dev/null; then
+  git -C "$ENGRAM_DIR" commit -m "sync: setup $(date '+%Y-%m-%d %H:%M:%S')" -q
+  git -C "$ENGRAM_DIR" push -q && ok "Memoria subida a GitHub" || warn "Push falló"
+else
+  ok "Sin cambios pendientes"
+fi
+
+# ─── 5. Instalar scripts de sync ─────────────────────────────────────────────
+step "5/6" "Instalando scripts de sync"
+
+mkdir -p "$SCRIPTS_DIR"
+
+cat > "$SCRIPTS_DIR/engram-pull.sh" << 'SCRIPT'
+#!/bin/bash
+set -e
+cd "$HOME/.engram"
+git pull --rebase --autostash 2>/dev/null || true
+engram sync --import 2>/dev/null || true
+echo "✓ Memoria sincronizada"
+SCRIPT
+
+cat > "$SCRIPTS_DIR/engram-push.sh" << 'SCRIPT'
+#!/bin/bash
+set -e
+cd "$HOME/.engram"
+engram sync
+git add chunks/ manifest.json 2>/dev/null || true
+if git diff --staged --quiet; then
+  echo "— Sin cambios para sincronizar"
+else
+  git commit -m "sync: $(date '+%Y-%m-%d %H:%M:%S')"
+  git push
+  echo "✓ Memoria subida a GitHub"
+fi
+SCRIPT
+
+chmod +x "$SCRIPTS_DIR/engram-pull.sh" "$SCRIPTS_DIR/engram-push.sh"
+ok "engram-pull.sh y engram-push.sh instalados en $SCRIPTS_DIR"
+
+# ─── 6. Configurar herramientas de IA ────────────────────────────────────────
+step "6/6" "Configurando herramientas de IA"
+
+# Claude Code
+if command -v claude &>/dev/null; then
+  if grep -q '"engram"' "$HOME/.claude/settings.json" 2>/dev/null; then
+    ok "Claude Code — Engram ya configurado"
+  else
+    info "Configurando Engram en Claude Code..."
+    engram setup claude-code 2>/dev/null && ok "Claude Code configurado" || \
+      warn "Configurá manualmente — ver README"
+  fi
+else
+  warn "Claude Code no instalado — saltando"
+fi
+
+# OpenCode
+if command -v opencode &>/dev/null; then
+  OPENCODE_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
+  if grep -q '"engram"' "$OPENCODE_CFG" 2>/dev/null; then
+    ok "OpenCode — Engram ya configurado"
+  else
+    info "Configurando Engram en OpenCode..."
+    engram setup opencode 2>/dev/null && ok "OpenCode configurado" || \
+      warn "Configurá manualmente — ver README"
+  fi
+else
+  warn "OpenCode no instalado — saltando"
+fi
+
+# Qwen Code
+if command -v qwen &>/dev/null; then
+  if grep -q '"engram"' "$HOME/.qwen/settings.json" 2>/dev/null; then
+    ok "Qwen Code — Engram ya configurado"
+  else
+    info "Configurando Engram en Qwen Code..."
+    qwen mcp add --scope user --transport stdio engram engram mcp 2>/dev/null && \
+      ok "Qwen Code configurado" || warn "Configurá manualmente — ver README"
+  fi
+else
+  warn "Qwen Code no instalado — saltando"
+fi
+
+# ─── Resumen ──────────────────────────────────────────────────────────────────
+CHUNK_COUNT=$(ls "$ENGRAM_DIR/chunks/"*.jsonl.gz 2>/dev/null | wc -l || echo 0)
+DB_SIZE=$(du -sh "$ENGRAM_DIR/engram.db" 2>/dev/null | cut -f1 || echo "—")
 
 echo ""
-echo "╔══════════════════════════════════════╗"
-echo "║          Setup completado ✓          ║"
-echo "╚══════════════════════════════════════╝"
+echo "╔══════════════════════════════════════════╗"
+[ "$ERRORS" -eq 0 ] && \
+  echo "║          Setup completado ✓              ║" || \
+  echo "║    Setup con $ERRORS error(es) — revisá ✗       ║"
+echo "╚══════════════════════════════════════════╝"
 echo ""
-echo "  Sync al iniciar sesión: systemd (automático)"
-echo "  Sync cada hora:         cron (automático)"
-echo "  Sync manual:            engram-sync.sh"
-echo "  Logs:                   ~/.engram/sync.log"
-echo "  Google Drive:           $GDRIVE_REMOTE"
+echo "  Base de datos:   $DB_SIZE"
+echo "  Chunks:          $CHUNK_COUNT"
+echo "  Repo GitHub:     https://github.com/$GITHUB_USER/$REPO_NAME"
 echo ""
+echo "  Al iniciar sesión:  engram-pull.sh"
+echo "  Al terminar:        engram-push.sh"
+echo ""
+[ "$ERRORS" -gt 0 ] && echo "  ✗ Revisá los errores marcados arriba." && echo ""

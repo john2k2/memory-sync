@@ -1,59 +1,78 @@
 # memory-sync
 
-Setup automático de Engram + rclone + Google Drive.
+Memoria persistente de IA sincronizada entre máquinas (Linux, Windows, macOS).
 
-Una sola línea en una PC nueva y tenés toda tu memoria de IA restaurada.
+Un solo comando en una PC nueva y tenés toda tu memoria restaurada — compatible con Claude Code, OpenCode y Qwen Code.
 
 ## PC nueva — setup completo
 
+**Linux / macOS:**
 ```bash
 git clone https://github.com/john2k2/memory-sync.git
 cd memory-sync
 bash setup.sh
 ```
 
-El script:
-1. Instala `rclone` y `engram` si no están
-2. Configura Google Drive (abre el browser para autorizar)
-3. Restaura todas las memorias previas desde Google Drive
-4. Instala el cron de sync automático (cada hora)
-5. Respalda la config de rclone en Drive para la próxima vez
+**Windows (PowerShell):**
+```powershell
+git clone https://github.com/john2k2/memory-sync.git
+cd memory-sync
+.\setup.ps1
+```
+
+El script hace todo solo:
+1. Verifica e instala `engram` si no está (via Go, Homebrew o binario)
+2. Verifica acceso a GitHub y crea el repo privado si hace falta
+3. Inicializa `~/.engram` como repo git
+4. Sincroniza la memoria existente
+5. Instala los scripts de sync (`engram-pull` / `engram-push`)
+6. Configura Claude Code, OpenCode y Qwen Code automáticamente
 
 ## Uso diario
 
-No necesitás hacer nada. El sync es automático cada hora.
-
-**Sync manual:**
 ```bash
-engram-sync.sh
+# Al empezar a trabajar:
+engram-pull.sh        # Linux/macOS
+engram-pull.ps1       # Windows
+
+# Al terminar:
+engram-push.sh        # Linux/macOS
+engram-push.ps1       # Windows
 ```
 
-**Ver logs:**
-```bash
-tail -f ~/.engram/sync.log
-```
-
-**Ver memorias guardadas:**
-```bash
-engram context
-engram search "lo que buscás"
-```
-
-## Estructura en Google Drive
+## Flujo entre máquinas
 
 ```
-TRABAJO/
-  engram-sync/
-    reservaloYa/       → memorias del proyecto ReservaYa
-    programacion/      → memorias generales
-    _config/           → backup de rclone.conf
+Linux   →  engram-pull.sh   →  trabajás  →  engram-push.sh
+Windows →  engram-pull.ps1  →  trabajás  →  engram-push.ps1
+           (Claude / OpenCode / Qwen — todos leen la misma memoria)
 ```
 
-## Restaurar en una PC sin internet previo
+## Herramientas compatibles
 
-Si perdiste acceso a Google Drive temporalmente y tenés un backup manual:
+| Herramienta | Soporte |
+|---|---|
+| Claude Code | Nativo (`engram setup claude-code`) |
+| OpenCode | Nativo (`engram setup opencode`) |
+| Qwen Code | MCP stdio (`qwen mcp add`) |
+| Cursor / Windsurf / VS Code | Manual vía `.mcp.json` |
 
-```bash
-# Importar desde archivo local
-engram sync --import /ruta/al/chunk.jsonl.gz
+## Requisitos
+
+- Git
+- Una de estas opciones para instalar Engram: Go 1.24+, Homebrew (macOS/Linux), o descarga del binario
+- GitHub CLI (`gh`) recomendado para crear el repo automáticamente
+
+## Estructura del repo de memoria
+
 ```
+~/.engram/                  (o %USERPROFILE%\.engram en Windows)
+├── .gitignore              → excluye engram.db (DB local, no se sube)
+├── manifest.json           → índice de chunks
+└── chunks/
+    ├── a3f8c1d2.jsonl.gz   → chunk de memoria comprimido
+    └── ...
+```
+
+Los chunks son append-only — nunca hay merge conflicts.
+La DB local (`engram.db`) se regenera desde los chunks en cada máquina.
