@@ -172,7 +172,7 @@ else
 fi
 
 # ─── 5. Instalar scripts de sync ─────────────────────────────────────────────
-step "5/6" "Instalando scripts de sync"
+step "5/7" "Instalando scripts de sync"
 
 mkdir -p "$SCRIPTS_DIR"
 
@@ -204,7 +204,7 @@ chmod +x "$SCRIPTS_DIR/engram-pull.sh" "$SCRIPTS_DIR/engram-push.sh"
 ok "engram-pull.sh y engram-push.sh instalados en $SCRIPTS_DIR"
 
 # ─── 6. Configurar herramientas de IA ────────────────────────────────────────
-step "6/6" "Configurando herramientas de IA"
+step "6/7" "Configurando herramientas de IA"
 
 # Claude Code
 if command -v claude &>/dev/null; then
@@ -244,6 +244,19 @@ if command -v qwen &>/dev/null; then
   fi
 else
   warn "Qwen Code no instalado — saltando"
+fi
+
+# ─── 7. Configurar sync automático cada 30 minutos ───────────────────────────
+step "7/7" "Configurando sync automático"
+
+CRON_JOB="*/30 * * * * $SCRIPTS_DIR/engram-push.sh >> $ENGRAM_DIR/sync.log 2>&1"
+
+if crontab -l 2>/dev/null | grep -q "engram-push.sh"; then
+  ok "Cron ya configurado — sin cambios"
+else
+  # Limpiar entradas viejas de engram si las hay
+  (crontab -l 2>/dev/null | grep -v "engram"; echo "$CRON_JOB") | crontab -
+  ok "Cron configurado: sync cada 30 minutos en segundo plano"
 fi
 
 # ─── Resumen ──────────────────────────────────────────────────────────────────

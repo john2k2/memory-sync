@@ -212,7 +212,7 @@ if ($hasChanges) {
 }
 
 # ─── 5. Instalar scripts de sync ─────────────────────────────────────────────
-Step "5/6" "Instalando scripts de sync"
+Step "5/7" "Instalando scripts de sync"
 
 New-Item -ItemType Directory -Force -Path $SCRIPTS_DIR | Out-Null
 
@@ -245,7 +245,7 @@ Set-Content -Path "$SCRIPTS_DIR\engram-push.ps1" -Value $pushScript -Encoding UT
 Ok "engram-pull.ps1 y engram-push.ps1 instalados en $SCRIPTS_DIR"
 
 # ─── 6. Configurar herramientas de IA ────────────────────────────────────────
-Step "6/6" "Configurando herramientas de IA"
+Step "6/7" "Configurando herramientas de IA"
 
 # Claude Code
 if (Get-Command claude -ErrorAction SilentlyContinue) {
@@ -293,6 +293,45 @@ if (Get-Command qwen -ErrorAction SilentlyContinue) {
     }
 } else {
     Warn "Qwen Code no instalado -- saltando"
+}
+
+# ─── 7. Configurar sync automático cada 30 minutos (Task Scheduler) ──────────
+Step "7/7" "Configurando sync automatico"
+
+$taskName = "EngramSync"
+$existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+
+if ($existingTask) {
+    Ok "Task Scheduler ya configurado -- sin cambios"
+} else {
+    try {
+        $action = New-ScheduledTaskAction `
+            -Execute "powershell.exe" `
+            -Argument "-WindowStyle Hidden -NonInteractive -File `"$SCRIPTS_DIR\engram-push.ps1`""
+
+        # Trigger: repetir cada 30 minutos indefinidamente
+        $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
+            -RepetitionInterval (New-TimeSpan -Minutes 30) `
+            -RepetitionDuration ([TimeSpan]::MaxValue)
+
+        $settings = New-ScheduledTaskSettingsSet `
+            -ExecutionTimeLimit (New-TimeSpan -Minutes 5) `
+            -StartWhenAvailable `
+            -RunOnlyIfNetworkAvailable
+
+        Register-ScheduledTask `
+            -TaskName $taskName `
+            -Action $action `
+            -Trigger $trigger `
+            -Settings $settings `
+            -Description "Engram memory sync to GitHub every 30 minutes" `
+            -RunLevel Highest | Out-Null
+
+        Ok "Task Scheduler configurado: sync cada 30 min en segundo plano"
+    } catch {
+        Warn "No se pudo configurar Task Scheduler: $_"
+        Warn "Ejecuta el setup como Administrador si el problema persiste"
+    }
 }
 
 # ─── Resumen ──────────────────────────────────────────────────────────────────
