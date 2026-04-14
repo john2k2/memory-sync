@@ -277,4 +277,4 @@ echo ""
 echo "  Al iniciar sesión:  engram-pull.sh"
 echo "  Al terminar:        engram-push.sh"
 echo ""
-[ "$ERRORS" -gt 0 ] && echo "  ✗ Revisá los errores marcados arriba." && echo ""
+if [ "$ERRORS" -gt 0 ]; then echo "  ✗ Revisá los errores marcados arriba."; echo ""; fi
